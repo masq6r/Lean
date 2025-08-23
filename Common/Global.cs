@@ -1060,6 +1060,18 @@ namespace QuantConnect
                         return Exchange.NYSELIFFE;
                     case "EUREX":
                         return Exchange.EUREX;
+                    case "SHFE":
+                        return Exchange.SHFE;
+                    case "CFFEX":
+                        return Exchange.CFFEX;
+                    case "INE":
+                        return Exchange.INE;
+                    case "CZCE":
+                        return Exchange.CZCE;
+                    case "DCE":
+                        return Exchange.DCE;
+                    case "GFEX":
+                        return Exchange.GFEX;
                     default:
                         return Exchange.UNKNOWN;
                 }

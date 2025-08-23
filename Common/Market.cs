@@ -70,7 +70,18 @@ namespace QuantConnect
             Tuple.Create(Coinbase, 38),
             Tuple.Create(InteractiveBrokers, 39),
             Tuple.Create(EUREX, 40),
-            Tuple.Create(OSE, 41)
+            Tuple.Create(OSE, 41),
+            
+            // China futures market.
+            Tuple.Create(SHFE, 555),
+            Tuple.Create(INE, 556),
+            Tuple.Create(CFFEX, 557),
+            Tuple.Create(DCE, 558),
+            Tuple.Create(CZCE, 559),
+            Tuple.Create(GFEX, 560),
+            Tuple.Create(SSE, 600),
+            Tuple.Create(SZSE, 601),
+            Tuple.Create(BSECN, 602)
         };
 
         static Market()
@@ -260,6 +271,51 @@ namespace QuantConnect
         /// InteractiveBrokers market
         /// </summary>
         public const string InteractiveBrokers = "interactivebrokers";
+
+        /// <summary>
+        /// China futures market - SHFE
+        /// </summary>
+        public const string SHFE = "shfe";
+
+        /// <summary>
+        /// China futures market - INE
+        /// </summary>
+        public const string INE = "ine";
+
+        /// <summary>
+        /// China futures market - CFFEX
+        /// </summary>
+        public const string CFFEX = "cffex";
+        
+        /// <summary>
+        /// China futures market - DCE
+        /// </summary>
+        public const string DCE = "dce";
+
+        /// <summary>
+        /// China futures market - CZCE
+        /// </summary>
+        public const string CZCE = "czce";
+
+        /// <summary>
+        /// China futures market - GFEX
+        /// </summary>
+        public const string GFEX = "gfex";
+
+        /// <summary>
+        /// China stock market - SSE
+        /// </summary>
+        public const string SSE = "sse";
+
+        /// <summary>
+        /// China stock market - SZSE
+        /// </summary>
+        public const string SZSE = "szse";
+
+        /// <summary>
+        /// China stock market - BSE
+        /// </summary>
+        public const string BSECN = "bsecn";
 
         /// <summary>
         /// Adds the specified market to the map of available markets with the specified identifier.

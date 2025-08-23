@@ -319,6 +319,60 @@ namespace QuantConnect
             = new("PHLX", "X", "NASDAQ OMX PHLX", QuantConnect.Market.USA, SecurityType.Option, SecurityType.IndexOption);
 
         /// <summary>
+        /// SHFE.
+        /// </summary>
+        public static Exchange SHFE { get; }
+            = new("SHFE", "SHFE", "上海期货交易所", "shfe", SecurityType.Future);
+
+        /// <summary>
+        /// INE.
+        /// </summary>
+        public static Exchange INE { get; }
+            = new("INE", "INE", "上海国际能源交易中心", "ine", SecurityType.Future);
+
+        /// <summary>
+        /// CZCE.
+        /// </summary>
+        public static Exchange CZCE { get; }
+            = new("CZCE", "CZCE", "郑州期货交易所", "czce", SecurityType.Future);
+
+        /// <summary>
+        /// DCE.
+        /// </summary>
+        public static Exchange DCE { get; }
+            = new("DCE", "DCE", "大连期货交易所", "dce", SecurityType.Future);
+
+        /// <summary>
+        /// CFFEX.
+        /// </summary>
+        public static Exchange CFFEX { get; }
+            = new("CFFEX", "CFFEX", "中国金融期货交易所", "cffex", SecurityType.Future);
+
+        /// <summary>
+        /// GFEX.
+        /// </summary>
+        public static Exchange GFEX { get; }
+            = new("GFEX", "GFEX", "广州期货交易所", "gfex", SecurityType.Future);
+
+        /// <summary>
+        /// SSE.
+        /// </summary>
+        public static Exchange SSE { get; }
+            = new("SSE", "SSE", "上海证券交易所", "sse", SecurityType.Equity);
+
+        /// <summary>
+        /// SZSE.
+        /// </summary>
+        public static Exchange SZSE { get; }
+            = new("SZSE", "SZSE", "深圳证券交易所", "szse", SecurityType.Equity);
+
+        /// <summary>
+        /// BSECN.
+        /// </summary>
+        public static Exchange BSECN { get; }
+            = new("BSECN", "BSECN", "北京证券交易所", "bsecn", SecurityType.Equity);
+
+        /// <summary>
         /// Exchange description
         /// </summary>
         [JsonIgnore]

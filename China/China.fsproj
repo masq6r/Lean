@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="FutureDailyPlusBar.fs" />
+    <Compile Include="PessimisticSlippageModel.fs" />
+    <Compile Include="FixedRatioFeeModel.fs" />
+    <Compile Include="FixedRatioFutureMarginModel.fs" />
+    <Compile Include="FutureSettlementModel.fs" />
+    <Compile Include="FutureAlgorithm.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Common\QuantConnect.csproj" />
+    <ProjectReference Include="..\Algorithm\QuantConnect.Algorithm.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharpPlus" Version="1.7.0" />
+  </ItemGroup>
+
+</Project>
