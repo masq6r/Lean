@@ -399,8 +399,19 @@ namespace QuantConnect.Lean.Engine.Results
                 {
                     directory.Create();
                 }
-                var orderedInsights = allInsights.OrderBy(insight => insight.GeneratedTimeUtc);
-                File.WriteAllText(alphaResultsPath, JsonConvert.SerializeObject(orderedInsights, Formatting.Indented, SerializerSettings));
+                var cap = Config.GetInt("store-insights-cap", 10000);
+                var orderedInsights = allInsights.OrderBy(insight => insight.GeneratedTimeUtc).Take(cap);
+                using var sw = new StreamWriter(alphaResultsPath);
+                using var writer = new JsonTextWriter(sw);
+                writer.Formatting = Formatting.Indented;
+                var serializer = JsonSerializer.Create(SerializerSettings);
+
+                writer.WriteStartArray();
+                foreach (var insight in orderedInsights)
+                {
+                    serializer.Serialize(writer, insight);
+                }
+                writer.WriteEndArray();
             }
         }
 
