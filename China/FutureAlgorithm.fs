@@ -41,3 +41,7 @@ type FutureAlgorithm() as self =
         self.SetSecurityInitializer(FutureInitialiser(self.BrokerageModel, SecuritySeeder.Null, self))
 
     member val DataTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Pacific/Wake")
+
+    member me.AddDailyPlus(underlying: Symbol, ?fillForward) =
+        let ff = defaultArg fillForward false
+        me.AddData<FutureDailyPlusBar>(underlying, Resolution.Daily, fillForward = ff)
