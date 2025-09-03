@@ -61,7 +61,7 @@ type FixedRatioFutureMarginModel =
         let futureCache = security.Cache :?> Future.FutureCache
         let multiplier = security.SymbolProperties.ContractMultiplier
         let (isFallback, sPrice) =
-            me.algo.ActiveSecurities.Values
+            me.algo.Securities.Values
             |> Seq.tryPick (fun sec ->
                 match sec.GetLastData() with
                 | :? FutureDailyPlusBar as dBar when dBar.Symbol.Underlying = symbol ->
@@ -73,9 +73,10 @@ type FixedRatioFutureMarginModel =
         let v =
             parameters.AbsoluteQuantity * sPrice * me.marginRatio
             * security.QuoteCurrency.ConversionRate * multiplier
-        Log.Debug(
-            $"{nameof FixedRatioFutureMarginModel}.GetMaintenanceMargin(): {security.Symbol}: {security.LocalTime}" +
-            $"""Settlement: {sPrice}{if isFallback then " (fallback to close price)" else ""},""" +
-            $"Qty: {parameters.AbsoluteQuantity}, Multiplier: {multiplier}, Margin ratio: {me.marginRatio}," +
-            " Maintenance margin: {v}")
+        if isFallback then
+            Log.Debug(
+                $"{nameof FixedRatioFutureMarginModel}.GetMaintenanceMargin(): {security.Symbol}: {security.LocalTime}" +
+                $"""Settlement: {sPrice}{if isFallback then " (fallback to close price)" else ""},""" +
+                $"Qty: {parameters.AbsoluteQuantity}, Multiplier: {multiplier}, Margin ratio: {me.marginRatio}," +
+                $" Maintenance margin: {v}")
         Securities.MaintenanceMargin v

@@ -3,18 +3,14 @@ namespace QuantConnect.China
 open System
 open QuantConnect
 open QuantConnect.Securities
-open QuantConnect.Configuration
 
-type private FutureInitialiser(brokerageModel, securitySeeder, algo: Algorithm.QCAlgorithm) =
+type private FutureInitialiser(brokerageModel, securitySeeder, algo: Algorithm.QCAlgorithm, slippage, feeRatio, marginRatio) =
     inherit BrokerageModelSecurityInitializer(brokerageModel, securitySeeder)
 
     override _.Initialize(security) =
         base.Initialize(security)
-        let slippage = Configuration.Config.GetInt("slippage", 0)
         security.SetSlippageModel(PessimisticSlippageModel(slippage))
-        let feeRatio = Config.GetDouble("fee-ratio", 0.00005)
         security.SetFeeModel(FixedRatioFeeModel(decimal feeRatio))
-        let marginRatio = Config.GetDouble("margin-ratio", 0.15)
         security.SetBuyingPowerModel(FixedRatioFutureMarginModel(decimal marginRatio, algo))
         security.SettlementModel <- FutureSettlementModel(algo)
 
@@ -22,14 +18,17 @@ type private FutureInitialiser(brokerageModel, securitySeeder, algo: Algorithm.Q
 /// Tailored to fit China futures market:
 /// TimeZone: set to Shanghai.
 /// Currency: CNH.
-/// Benchmark: constant annual return set by `annual-return-rate` of `config.json`.
+/// Benchmark: constant annual return set by strategy parameter `annual-return-rate`.
 /// Buying power model, fee model and slippage model are customised to fit China futures market.
 /// </summary>
 type FutureAlgorithm() as self =
     inherit Algorithm.QCAlgorithm()
 
+    let slippage = self.GetParameter("slippage", 0)
+    let feeRatio = self.GetParameter("fee-ratio", 0.00005)
+    let marginRatio = self.GetParameter("margin-ratio", 0.15)
     let dailyReturn =
-        let rate = Configuration.Config.GetDouble("annual-return-rate", 0.05)
+        let rate = self.GetParameter("annual-return-rate", 0.05)
         Math.Pow(1.0 + rate, 1.0 / 365.0)
 
     do
@@ -38,7 +37,7 @@ type FutureAlgorithm() as self =
         self.SetBenchmark(fun day ->
             let span = day - self.StartDate
             decimal <|  dailyReturn ** span.TotalDays)
-        self.SetSecurityInitializer(FutureInitialiser(self.BrokerageModel, SecuritySeeder.Null, self))
+        self.SetSecurityInitializer(FutureInitialiser(self.BrokerageModel, SecuritySeeder.Null, self, slippage, feeRatio, marginRatio))
 
     member val DataTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Pacific/Wake")
 
