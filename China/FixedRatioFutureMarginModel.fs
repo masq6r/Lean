@@ -60,7 +60,7 @@ type FixedRatioFutureMarginModel =
         let symbol = security.Symbol
         let futureCache = security.Cache :?> Future.FutureCache
         let multiplier = security.SymbolProperties.ContractMultiplier
-        let (isFallback, sPrice) =
+        let isFallback, sPrice =
             me.algo.Securities.Values
             |> Seq.tryPick (fun sec ->
                 match sec.GetLastData() with

@@ -9,10 +9,11 @@ type private FutureInitialiser(brokerageModel, securitySeeder, algo: Algorithm.Q
 
     override _.Initialize(security) =
         base.Initialize(security)
-        security.SetSlippageModel(PessimisticSlippageModel(slippage))
-        security.SetFeeModel(FixedRatioFeeModel(decimal feeRatio))
-        security.SetBuyingPowerModel(FixedRatioFutureMarginModel(decimal marginRatio, algo))
-        security.SettlementModel <- FutureSettlementModel(algo)
+        if security :? Future.Future then
+            security.SetSlippageModel(PessimisticSlippageModel(slippage))
+            security.SetFeeModel(FixedRatioFeeModel(decimal feeRatio))
+            security.SetBuyingPowerModel(FixedRatioFutureMarginModel(decimal marginRatio, algo))
+            security.SettlementModel <- FutureSettlementModel(algo)
 
 /// <summary>
 /// Tailored to fit China futures market:

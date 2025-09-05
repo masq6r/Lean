@@ -17,7 +17,7 @@ type FutureDailyPlusBar() =
         let market = symbol.ID.Market.ToUpperInvariant()
         let directory = Path.Combine(Globals.DataFolder, "future", market, "daily+")
         let year = symbol.ID.Date.Year
-        let suffix = $"{year % 100}{symbol.ID.Date.Month |> string |> String.padLeft 2}"
+        let suffix = $"{year % 100}{symbol.ID.Date.Month |> string |> String.padLeftWith 2 '0'}"
         let name = $"{symbol.Underlying.ID.Symbol}{suffix}.csv"
         let path = Path.Combine(directory, string year, name)
         SubscriptionDataSource(path, SubscriptionTransportMedium.LocalFile, FileFormat.Csv)
