@@ -8,7 +8,7 @@ open QuantConnect.Data
 
 [<AllowNullLiteral>]
 type FutureDailyPlusBar() =
-    inherit BaseData()
+    inherit Market.TradeBar()
 
     static let shTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Shanghai")
 
@@ -60,12 +60,12 @@ type FutureDailyPlusBar() =
     member val LowerBound = -1m with get, set
     member val UpperBound = -1m with get, set
     member val SettlementPrice = -1m with get, set
-    member val Open = -1m with get, set
-    member val High = -1m with get, set
-    member val Low = -1m with get, set
-    member val Close = -1m with get, set
+    override val Open = -1m with get, set
+    override val High = -1m with get, set
+    override val Low = -1m with get, set
+    override val Close = -1m with get, set
     member val Turnover = -1m with get, set
     member val OpenInterest = -1m with get, set
-    member val Volume = -1m with get, set
+    override val Volume = -1m with get, set
     override val Value = -1m with get, set
     override val EndTime = DateTime.MinValue with get, set
