@@ -180,7 +180,17 @@ namespace QuantConnect.Lean.Engine
             DataProvider = dataProvider;
             ObjectStore = objectStore;
             DataPermissionsManager = dataPermissionsManager;
-            DataCacheProvider = new ZipDataCacheProvider(DataProvider, isDataEphemeral: liveMode);
+            var isOptimisation = !String.IsNullOrWhiteSpace(Config.Get("optimization-id"));
+            if (isOptimisation)
+            {
+                MemoryMappedFileCacheProvider.Initialize(dataProvider);
+                DataCacheProvider = MemoryMappedFileCacheProvider.Instance;
+            }
+            else
+            {
+                DataCacheProvider = new ZipDataCacheProvider(dataProvider, isDataEphemeral: liveMode);
+            }
+            
             DataMonitor = dataMonitor ?? new DataMonitor();
 
             if (!liveMode && !researchMode)

@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using QuantConnect.Configuration;
 using QuantConnect.Data;
 using QuantConnect.Data.Auxiliary;
 using QuantConnect.Data.Fundamental;
@@ -75,7 +76,16 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             _dataProvider = dataProvider;
             _timeProvider = dataFeedTimeProvider.FrontierTimeProvider;
             _subscriptions = subscriptionManager.DataFeedSubscriptions;
-            _cacheProvider = new ZipDataCacheProvider(dataProvider, isDataEphemeral: false);
+            var isOptimisation = !String.IsNullOrWhiteSpace(Config.Get("optimization-id"));
+            if (isOptimisation)
+            {
+                MemoryMappedFileCacheProvider.Initialize(dataProvider);
+                _cacheProvider = MemoryMappedFileCacheProvider.Instance;
+            }
+            else
+            {
+                _cacheProvider = new ZipDataCacheProvider(dataProvider, isDataEphemeral: false);
+            }
             _subscriptionFactory = new SubscriptionDataReaderSubscriptionEnumeratorFactory(
                 _resultHandler,
                 _mapFileProvider,
