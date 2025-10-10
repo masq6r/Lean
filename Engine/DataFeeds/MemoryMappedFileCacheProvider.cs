@@ -37,15 +37,12 @@ namespace QuantConnect.Lean.Engine.DataFeeds
     {
         private const long MagicNumber = 0xDEADBEEF;
         private const string CacheName = "LeanSharedCache";
-        private const long DefaultCapacity = 1L * 1024 * 1024 * 1024; // 1 GB
-        private const int IndexSize = 100000; // Number of index entries
 
         // Header: MagicNumber (8 bytes) + Capacity (8 bytes) + NextAllocationOffset (8 bytes) = 24 bytes
-        private const int HeaderSize = 24;
+        private const int HeaderSize = 32;
+        private const int ReferenceCountOffset = 24;
         // Index Entry: KeyHash (8 bytes) + DataOffset (8 bytes) + DataLength (4 bytes) + KeyLength (4 bytes) = 24 bytes
         private const int IndexEntrySize = 24;
-        private const int IndexAreaSize = IndexSize * IndexEntrySize;
-        private const int DataAreaOffset = HeaderSize + IndexAreaSize;
 
         private static IDataProvider _dataProvider;
         private static readonly Lazy<MemoryMappedFileCacheProvider> _instance = new Lazy<MemoryMappedFileCacheProvider>(() => new MemoryMappedFileCacheProvider());
@@ -59,8 +56,10 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         private long _disposed;
         private static long _totalRequests;
         private static long _cacheHits;
-        private static long _cacheEntries;
+        private static long _storeCalls;
 
+        private static long _fetchFromDataProviderNulls;
+ 
         /// <summary>
         /// Gets the singleton instance of the cache provider.
         /// </summary>
@@ -90,35 +89,66 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 throw new InvalidOperationException("MemoryMappedFileCacheProvider must be initialized with a data provider before use.");
             }
 
-            _capacity = Config.GetInt("mmf-cache-capacity-gb", 1) * 1024L * 1024L * 1024L;
-            _indexSize = Config.GetInt("mmf-cache-index-size", 100000);
+            _capacity = Config.GetInt("mmf-cache-capacity-gb", 2) * 1024L * 1024L * 1024L;
+            _indexSize = Config.GetInt("mmf-cache-index-size", 1000000);
             var indexAreaSize = _indexSize * IndexEntrySize;
             _dataAreaOffset = HeaderSize + indexAreaSize;
 
             var mutexName = $"Global\\{CacheName}_Mutex";
             _globalWriteMutex = new Mutex(initiallyOwned: false, name: mutexName);
+            var mutexAcquired = false;
 
-            _mmf = MemoryMappedFile.CreateOrOpen(CacheName, _capacity, MemoryMappedFileAccess.ReadWrite);
-            _accessor = _mmf.CreateViewAccessor();
-
-            _globalWriteMutex.WaitOne();
             try
             {
-                var magicNumber = _accessor.ReadInt64(0);
-                if (magicNumber != MagicNumber)
+                var mutexAbandoned = false;
+                try
                 {
-                    // Initialize the MMF header
+                    mutexAcquired = _globalWriteMutex.WaitOne(TimeSpan.FromSeconds(60));
+                }
+                catch (AbandonedMutexException)
+                {
+                    Log.Error("MemoryMappedFileCacheProvider: Acquired an abandoned mutex. The cache will be re-initialized.");
+                    mutexAbandoned = true;
+                    mutexAcquired = true;
+                }
+
+                if (!mutexAcquired)
+                {
+                    throw new TimeoutException("MemoryMappedFileCacheProvider: Timed out waiting for the global write mutex.");
+                }
+
+                _mmf = MemoryMappedFile.CreateOrOpen(CacheName, _capacity, MemoryMappedFileAccess.ReadWrite);
+                _accessor = _mmf.CreateViewAccessor();
+
+                var magicNumber = _accessor.ReadInt64(0);
+                if (magicNumber != MagicNumber || mutexAbandoned)
+                {
+                    Log.Trace("MemoryMappedFileCacheProvider: Initializing MMF header and setting reference count to 1.");
                     _accessor.Write(0, MagicNumber);
                     _accessor.Write(8, _capacity);
                     _accessor.Write(16, (long)_dataAreaOffset);
-                    // Zero out the index area
+                    _accessor.Write(ReferenceCountOffset, 1); // Set initial reference count
                     var zeroArray = new byte[indexAreaSize];
                     _accessor.WriteArray(HeaderSize, zeroArray, 0, zeroArray.Length);
                 }
+                else
+                {
+                    var refCount = _accessor.ReadInt32(ReferenceCountOffset);
+                    _accessor.Write(ReferenceCountOffset, refCount + 1);
+                    Log.Trace($"MemoryMappedFileCacheProvider: Incremented reference count to {refCount + 1}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "MemoryMappedFileCacheProvider: A fatal error occurred during initialization.");
+                throw new InvalidOperationException("Failed to initialize MemoryMappedFileCacheProvider.", ex);
             }
             finally
             {
-                _globalWriteMutex.ReleaseMutex();
+                if (mutexAcquired)
+                {
+                    _globalWriteMutex.ReleaseMutex();
+                }
             }
 
             Log.Trace($"MemoryMappedFileCacheProvider initialized with MMF: '{CacheName}'");
@@ -140,14 +170,19 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             }
 
             // Slow path: cache miss, synchronize and fetch from data provider
-            var mutexName = GetMutexName(key);
+            LeanData.ParseKey(key, out var filename, out var entryName);
+            // The resource to lock is the file we'd fetch from the data provider.
+            // For zip entries, that's the zip file, not the entry itself, to prevent a thundering herd.
+            var resourceToLock = !string.IsNullOrEmpty(entryName) ? filename : key;
+            var mutexName = GetMutexName(resourceToLock);
+
             using (var mutex = new Mutex(false, mutexName))
             {
                 try
                 {
                     mutex.WaitOne();
 
-                    // Double-check cache after acquiring the lock
+                    // Double-check cache after acquiring the lock for a direct hit
                     stream = TryFetchFromCache(key);
                     if (stream != null)
                     {
@@ -155,7 +190,42 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                         return stream;
                     }
 
-                    // Still a miss, this thread will perform the fetch and store
+                    // If it's still a miss, check for a partial hit (cached zip file for a requested entry)
+                    if (!string.IsNullOrEmpty(entryName) && filename.EndsWith(".zip", StringComparison.InvariantCultureIgnoreCase))
+                    {
+                        var zipStream = TryFetchFromCache(filename);
+                        if (zipStream != null)
+                        {
+                            // Partial Hit: The zip file is cached. Extract the entry, store it, and return it.
+                            Interlocked.Increment(ref _cacheHits);
+                            try
+                            {
+                                using (zipStream)
+                                using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: false))
+                                {
+                                    var zipEntry = archive.Entries.FirstOrDefault(x => x.FullName.Equals(entryName, StringComparison.OrdinalIgnoreCase));
+                                    if (zipEntry != null)
+                                    {
+                                        using (var entryStream = zipEntry.Open())
+                                        using (var memoryStream = new MemoryStream())
+                                        {
+                                            entryStream.CopyTo(memoryStream);
+                                            // Promote the partial hit to a direct hit for next time
+                                            Store(key, memoryStream.ToArray());
+                                            return TryFetchFromCache(key);
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception e)
+                            {
+                                Log.Error(e, $"MemoryMappedFileCacheProvider.Fetch(): Error processing cached zip file: {filename}");
+                                // Fall through to fetch from source
+                            }
+                        }
+                    }
+
+                    // Still a miss (full miss), this thread will perform the fetch and store
                     return FetchAndStore(key);
                 }
                 finally
@@ -172,6 +242,8 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 throw new ObjectDisposedException(nameof(MemoryMappedFileCacheProvider));
             }
 
+            Interlocked.Increment(ref _storeCalls);
+
             _globalWriteMutex.WaitOne();
             try
             {
@@ -181,11 +253,6 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 {
                     // Invalidate the old index entry by setting its hash to -1 (tombstone).
                     _accessor.Write(existingIndexPos, -1L);
-                }
-                else
-                {
-                    // This is a new entry
-                    Interlocked.Increment(ref _cacheEntries);
                 }
 
                 var keyBytes = Encoding.UTF8.GetBytes(key);
@@ -242,34 +309,47 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         {
             LeanData.ParseKey(key, out var filename, out var entryName);
 
-            byte[] dataToCache;
-
             if (filename.EndsWith(".zip", StringComparison.InvariantCultureIgnoreCase) && !string.IsNullOrEmpty(entryName))
             {
-                // Handle zip file entries
+                // Handle zip file entries by caching both the zip and the entry
                 using (var stream = _dataProvider.Fetch(filename))
                 {
-                    if (stream == null) return null;
-
-                    try
+                    if (stream == null)
                     {
-                        using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false))
-                        {
-                            var zipEntry = archive.Entries.FirstOrDefault(x => x.FullName.Equals(entryName, StringComparison.OrdinalIgnoreCase));
-                            if (zipEntry == null) return null;
+                        Interlocked.Increment(ref _fetchFromDataProviderNulls);
+                        return null;
+                    }
 
-                            using (var entryStream = zipEntry.Open())
-                            using (var memoryStream = new MemoryStream())
+                    using (var memoryStream = new MemoryStream())
+                    {
+                        stream.CopyTo(memoryStream);
+                        var zipData = memoryStream.ToArray();
+
+                        // Cache the entire zip file to help with other partial hits
+                        Store(filename, zipData);
+
+                        try
+                        {
+                            // Now extract the requested entry from the zip data we just fetched
+                            using (var archive = new ZipArchive(new MemoryStream(zipData), ZipArchiveMode.Read, leaveOpen: false))
                             {
-                                entryStream.CopyTo(memoryStream);
-                                dataToCache = memoryStream.ToArray();
+                                var zipEntry = archive.Entries.FirstOrDefault(x => x.FullName.Equals(entryName, StringComparison.OrdinalIgnoreCase));
+                                if (zipEntry == null) return null;
+
+                                using (var entryStream = zipEntry.Open())
+                                using (var entryMemoryStream = new MemoryStream())
+                                {
+                                    entryStream.CopyTo(entryMemoryStream);
+                                    // Cache the specific entry for future direct hits
+                                    Store(key, entryMemoryStream.ToArray());
+                                }
                             }
                         }
-                    }
-                    catch (Exception e)
-                    {
-                        Log.Error(e, $"MemoryMappedFileCacheProvider.FetchAndStore(): Corrupt zip file or entry: {filename}#{entryName}");
-                        return null;
+                        catch (Exception e)
+                        {
+                            Log.Error(e, $"MemoryMappedFileCacheProvider.FetchAndStore(): Corrupt zip file or entry: {filename}#{entryName}");
+                            return null;
+                        }
                     }
                 }
             }
@@ -278,24 +358,22 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 // Handle non-zip files
                 using (var stream = _dataProvider.Fetch(key))
                 {
-                    if (stream == null) return null;
+                    if (stream == null)
+                    {
+                        Interlocked.Increment(ref _fetchFromDataProviderNulls);
+                        return null;
+                    }
                     using (var memoryStream = new MemoryStream())
                     {
                         stream.CopyTo(memoryStream);
-                        dataToCache = memoryStream.ToArray();
+                        Store(key, memoryStream.ToArray());
                     }
                 }
             }
 
-            if (dataToCache != null)
-            {
-                Store(key, dataToCache);
-                // Now that it's stored, fetch it from the cache to get the MMF-backed stream,
-                // ensuring consistent, zero-copy stream behavior for all cache hits and misses.
-                return TryFetchFromCache(key);
-            }
-
-            return null;
+            // Now that it's stored, fetch it from the cache to get the MMF-backed stream,
+            // ensuring consistent, zero-copy stream behavior for all cache hits and misses.
+            return TryFetchFromCache(key);
         }
 
         private long FindIndexEntry(string key, out long dataOffset, out int dataLength, out int keyLength)
@@ -306,7 +384,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             var keyHash = GetKeyHash(key);
             var keyBytes = Encoding.UTF8.GetBytes(key);
 
-            for (var i = 0; i < IndexSize; i++)
+            for (var i = 0; i < _indexSize; i++)
             {
                 var index = ((uint)keyHash + i) % _indexSize;
                 var indexPos = HeaderSize + index * IndexEntrySize;
@@ -347,7 +425,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
 
         private long FindEmptyIndexSlot(long keyHash)
         {
-            for (var i = 0; i < IndexSize; i++)
+            for (var i = 0; i < _indexSize; i++)
             {
                 var index = ((uint)keyHash + i) % _indexSize;
                 var indexPos = HeaderSize + index * IndexEntrySize;
@@ -373,7 +451,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         {
             using (var sha256 = SHA256.Create())
             {
-                var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(key));
+                var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(key.ToLowerInvariant()));
                 return $"Global\\LeanCache_{Convert.ToBase64String(hash).Replace("=", "").Replace("/", "_")}";
             }
         }
@@ -417,26 +495,78 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 return;
             }
 
-            var totalRequests = Interlocked.Read(ref _totalRequests);
-            if (totalRequests > 0)
+            // Log stats before we potentially dispose the accessor
+            var processRequests = Interlocked.Read(ref _totalRequests);
+            if (processRequests > 0)
             {
-                var cacheHits = Interlocked.Read(ref _cacheHits);
-                var cacheEntries = Interlocked.Read(ref _cacheEntries);
-                var hitRate = (double)cacheHits / totalRequests;
+                var processCacheHits = Interlocked.Read(ref _cacheHits);
+                var processStoreCalls = Interlocked.Read(ref _storeCalls);
+                var fetchFromDataProviderNulls = Interlocked.Read(ref _fetchFromDataProviderNulls);
+                var hitRate = (double)processCacheHits / processRequests;
+                var globalCacheEntries = GetTotalCacheEntries();
                 var usedBytes = _accessor.ReadInt64(16) - _dataAreaOffset;
                 var usedMb = usedBytes / (1024.0 * 1024.0);
 
-                Log.Trace($"MemoryMappedFileCacheProvider.Dispose(): Total Requests: {totalRequests}, Hit Rate: {hitRate:P}, " +
-                          $"Cache Entries: {cacheEntries}, Used Memory: {usedMb:F2} MB");
+                Log.Trace($"MemoryMappedFileCacheProvider.Dispose(): Process Requests: {processRequests}, Process Hit Rate: {hitRate:P}, " +
+                          $"Process Store Calls: {processStoreCalls}, DataProvider Misses: {fetchFromDataProviderNulls}, " +
+                          $"Global Cache Entries: {globalCacheEntries}, Used Memory: {usedMb:F2} MB");
             }
             else
             {
-                Log.Trace("MemoryMappedFileCacheProvider.Dispose(): No requests were made to the cache.");
+                Log.Trace("MemoryMappedFileCacheProvider.Dispose(): No requests were made to the cache by this process.");
             }
 
-            _accessor?.Dispose();
-            _mmf?.Dispose();
+            var mutexAcquired = false;
+            try
+            {
+                mutexAcquired = _globalWriteMutex.WaitOne(TimeSpan.FromSeconds(10));
+                if (mutexAcquired)
+                {
+                    var refCount = _accessor.ReadInt32(ReferenceCountOffset);
+                    var newRefCount = refCount - 1;
+                    _accessor.Write(ReferenceCountOffset, newRefCount);
+                    Log.Trace($"MemoryMappedFileCacheProvider: Decremented reference count to {newRefCount}.");
+
+                    if (newRefCount <= 0)
+                    {
+                        Log.Trace("MemoryMappedFileCacheProvider: Last reference released. Disposing MMF.");
+                        _accessor.Dispose();
+                        _mmf.Dispose();
+                    }
+                }
+                else
+                {
+                    Log.Error("MemoryMappedFileCacheProvider.Dispose(): Timed out waiting for global write mutex. Unable to decrement reference count or dispose MMF.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "MemoryMappedFileCacheProvider.Dispose(): An error occurred during MMF disposal logic.");
+            }
+            finally
+            {
+                if (mutexAcquired)
+                {
+                    _globalWriteMutex.ReleaseMutex();
+                }
+            }
+
             _globalWriteMutex?.Dispose();
+        }
+
+        private int GetTotalCacheEntries()
+        {
+            var count = 0;
+            for (var i = 0; i < _indexSize; i++)
+            {
+                var indexPos = HeaderSize + i * IndexEntrySize;
+                var storedHash = _accessor.ReadInt64(indexPos);
+                if (storedHash != 0 && storedHash != -1)
+                {
+                    count++;
+                }
+            }
+            return count;
         }
 
         /// <summary>
