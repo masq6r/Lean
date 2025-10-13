@@ -57,6 +57,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         private static long _totalRequests;
         private static long _cacheHits;
         private static long _cacheEntries;
+        private static long _diskMisses;
 
         /// <summary>
         /// Gets the singleton instance of the cache provider.
@@ -246,7 +247,11 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 // Handle zip file entries
                 using (var stream = _dataProvider.Fetch(filename))
                 {
-                    if (stream == null) return null;
+                    if (stream == null)
+                    {
+                       Interlocked.Increment(ref _diskMisses);
+                       return null;
+                    }
 
                     try
                     {
@@ -275,7 +280,11 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 // Handle non-zip files
                 using (var stream = _dataProvider.Fetch(key))
                 {
-                    if (stream == null) return null;
+                    if (stream == null)
+                    {
+                       Interlocked.Increment(ref _diskMisses);
+                       return null;
+                    }
                     using (var memoryStream = new MemoryStream())
                     {
                         stream.CopyTo(memoryStream);
@@ -385,6 +394,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             {
                 if (stream == null)
                 {
+                    Interlocked.Increment(ref _diskMisses);
                     // Following ZipDataCacheProvider's pattern of throwing an exception when the file can't be found for GetZipEntries.
                     throw new ArgumentException($"Failed to get zip entries from {zipFile}, file not found.");
                 }
@@ -419,12 +429,13 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             {
                 var cacheHits = Interlocked.Read(ref _cacheHits);
                 var cacheEntries = Interlocked.Read(ref _cacheEntries);
+                var diskMisses = Interlocked.Read(ref _diskMisses);
                 var hitRate = (double)cacheHits / totalRequests;
                 var usedBytes = _accessor.ReadInt64(16) - _dataAreaOffset;
                 var usedMb = usedBytes / (1024.0 * 1024.0);
 
                 Log.Trace($"MemoryMappedFileCacheProvider.Dispose(): Total Requests: {totalRequests}, Hit Rate: {hitRate:P}, " +
-                          $"Cache Entries: {cacheEntries}, Used Memory: {usedMb:F2} MB");
+                          $"Cache Entries: {cacheEntries}, Disk Misses: {diskMisses}, Used Memory: {usedMb:F2} MB");
             }
             else
             {
