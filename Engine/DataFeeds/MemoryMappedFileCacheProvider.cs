@@ -22,6 +22,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.Runtime.InteropServices;
 using QuantConnect.Configuration;
 using QuantConnect.Interfaces;
 using QuantConnect.Logging;
@@ -46,7 +47,10 @@ namespace QuantConnect.Lean.Engine.DataFeeds
 
         private static IDataProvider _dataProvider;
         private static readonly Lazy<MemoryMappedFileCacheProvider> _instance = new Lazy<MemoryMappedFileCacheProvider>(() => new MemoryMappedFileCacheProvider());
-        
+
+#if !WINDOWS
+        private readonly FileStream _fileStream;
+#endif
         private readonly MemoryMappedFile _mmf;
         private readonly MemoryMappedViewAccessor _accessor;
         private readonly Mutex _globalWriteMutex;
@@ -93,10 +97,26 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             var indexAreaSize = _indexSize * IndexEntrySize;
             _dataAreaOffset = HeaderSize + indexAreaSize;
 
-            var mutexName = $"Global\\{CacheName}_Mutex";
-            _globalWriteMutex = new Mutex(initiallyOwned: false, name: mutexName);
+            var baseMutexName = $"{CacheName}_Mutex";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                baseMutexName = $"Global\\{baseMutexName}";
+            }
+            _globalWriteMutex = new Mutex(initiallyOwned: false, name: baseMutexName);
 
+#if WINDOWS
             _mmf = MemoryMappedFile.CreateOrOpen(CacheName, _capacity, MemoryMappedFileAccess.ReadWrite);
+#else
+            var sharedFilePath = Path.Combine(Path.GetTempPath(), CacheName);
+            _fileStream = new FileStream(sharedFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
+
+            if (_fileStream.Length != _capacity)
+            {
+                _fileStream.SetLength(_capacity);
+            }
+            
+            _mmf = MemoryMappedFile.CreateFromFile(_fileStream, mapName: null, 0, MemoryMappedFileAccess.ReadWrite, HandleInheritability.None, leaveOpen: false);
+#endif
             _accessor = _mmf.CreateViewAccessor();
 
             _globalWriteMutex.WaitOne();
@@ -380,7 +400,12 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             using (var sha256 = SHA256.Create())
             {
                 var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(key));
-                return $"Global\\LeanCache_{Convert.ToBase64String(hash).Replace("=", "").Replace("/", "_")}";
+                var mutexName = $"LeanCache_{Convert.ToBase64String(hash).Replace("=", "").Replace("/", "_")}";
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    return $"Global\\{mutexName}";
+                }
+                return mutexName;
             }
         }
 
