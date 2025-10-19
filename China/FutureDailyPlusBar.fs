@@ -14,11 +14,11 @@ type FutureDailyPlusBar() =
 
     override _.GetSource(subscriptionDataConfig: SubscriptionDataConfig, time: DateTime, isLiveMode: bool) = 
         let symbol = subscriptionDataConfig.Symbol
-        let market = symbol.ID.Market.ToUpperInvariant()
+        let market = symbol.ID.Market.ToLowerInvariant()
         let directory = Path.Combine(Globals.DataFolder, "future", market, "daily+")
         let year = symbol.ID.Date.Year
         let suffix = $"{year % 100}{symbol.ID.Date.Month |> string |> String.padLeftWith 2 '0'}"
-        let name = $"{symbol.Underlying.ID.Symbol}{suffix}.csv"
+        let name = $"{symbol.Underlying.ID.Symbol.ToLowerInvariant()}{suffix}.csv"
         let path = Path.Combine(directory, string year, name)
         SubscriptionDataSource(path, SubscriptionTransportMedium.LocalFile, FileFormat.Csv)
         
