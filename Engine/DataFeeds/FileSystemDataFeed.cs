@@ -76,7 +76,8 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             _dataProvider = dataProvider;
             _timeProvider = dataFeedTimeProvider.FrontierTimeProvider;
             _subscriptions = subscriptionManager.DataFeedSubscriptions;
-            var isOptimisation = !String.IsNullOrWhiteSpace(Config.Get("optimization-id"));
+            // var isOptimisation = !String.IsNullOrWhiteSpace(Config.Get("optimization-id"));
+            var isOptimisation = false;
             if (isOptimisation)
             {
                 MemoryMappedFileCacheProvider.Initialize(dataProvider);

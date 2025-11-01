@@ -180,7 +180,8 @@ namespace QuantConnect.Lean.Engine
             DataProvider = dataProvider;
             ObjectStore = objectStore;
             DataPermissionsManager = dataPermissionsManager;
-            var isOptimisation = !String.IsNullOrWhiteSpace(Config.Get("optimization-id"));
+            // var isOptimisation = !String.IsNullOrWhiteSpace(Config.Get("optimization-id"));
+            var isOptimisation = false;
             if (isOptimisation)
             {
                 MemoryMappedFileCacheProvider.Initialize(dataProvider);
